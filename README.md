@@ -30,16 +30,25 @@ Do **not** add those details to this folder if the goal is to avoid disclosing t
 
 ## Requirements
 
-```text
-numpy
-scikit-learn
-```
+Python 3.8 or newer.
 
-Optional, only needed when the private backend is present:
+This public file only imports:
 
 ```text
-torch
+numpy>=1.20
+scikit-learn>=1.0
 ```
+
+To train the tabular diffusion backbone used in the paper (TabDDPM-style, majority class only), also install:
+
+```text
+torch>=1.12
+pandas>=1.3
+scipy>=1.7
+imbalanced-learn>=0.9
+```
+
+A CUDA build of PyTorch is recommended but not required. `pandas` and `scipy` are used in data loading and ranking statistics; `imbalanced-learn` (`imblearn`) is used for baseline undersamplers such as Tomek Links and ENN. They are not imported by `diffreu_pipeline.py` as released here.
 
 ## Usage
 
@@ -92,4 +101,32 @@ No change to `diffreu_pipeline.py` is required.
 | `num_classes` | sequence of categorical cardinalities; empty or `None` if all features are numeric |
 
 Loaders and stratified CV used in the paper are separate from this interface and may be shared independently (dataset I/O only).
-# DIFF-REU
+
+## Supplementary Material
+
+Export the supplementary material as a single PDF named `supplementary.pdf` and place it alongside the README and pipeline script:
+
+```text
+README.md
+diffreu_pipeline.py
+supplementary.pdf
+```
+
+### PDF Contents
+
+The supplementary PDF may include:
+
+- Additional tables and figures, including CD diagrams, sensitivity analyses, ablation results, and evaluation metrics omitted from the main paper.
+- evaluation protocol details.
+- Assumptions, propositions, and detailed proofs for the convergence analysis.
+
+Keep installation instructions, dependencies, and execution commands in this README.
+
+If the code archive exposes only the pipeline interface, ensure that the methodological details in the PDF match the intended scope of disclosure.
+
+### Preparation and Packaging
+
+1. Compile the supplementary LaTeX source into a single PDF.
+2. Rename the PDF to `supplementary.pdf`.
+3. Place the three files listed above directly at the root of the ZIP archive, without an enclosing folder.
+
