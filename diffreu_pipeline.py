@@ -8,7 +8,7 @@ This file is intentionally limited to the experiment pipeline:
         -> black-box undersampling
         -> train a classifier on the balanced set
 
-The sample-selection implementation is NOT included.  Place a private
+The sample selection implementation is NOT included.  Place a private
 module named ``diffreu_core.py`` (with ``select_majority``) next to this
 file when the full method is released.
 """
@@ -19,12 +19,31 @@ from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import f1_score, recall_score, roc_auc_score
 
 ArrayLike = Union[np.ndarray, Any]
 
 MINORITY_LABEL = 1
 MAJORITY_LABEL = 0
+CLASSIFICATION_THRESHOLD = 0.5
+
+
+def _gini_score(auc: float) -> float:
+    if auc is None or (isinstance(auc, float) and np.isnan(auc)):
+        return float("nan")
+    return 2.0 * float(auc) - 1.0
+
+
+def _gmean_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    r0 = recall_score(y_true, y_pred, pos_label=0, zero_division=0.0)
+    r1 = recall_score(y_true, y_pred, pos_label=1, zero_division=0.0)
+    return float(np.sqrt(r0 * r1)) if (r0 > 0 and r1 > 0) else 0.0
+
+
+def _tprgap_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    tpr = recall_score(y_true, y_pred, pos_label=1, zero_division=0.0)
+    tnr = recall_score(y_true, y_pred, pos_label=0, zero_division=0.0)
+    return float(abs(tpr - tnr))
 
 
 def _to_numpy(x: ArrayLike) -> np.ndarray:
@@ -44,7 +63,7 @@ def _majority_mask(y: np.ndarray) -> np.ndarray:
 
 @dataclass
 class DiffusionHandle:
-    """Trained majority-class diffusion backbone. Contains no selector state."""
+    """Trained majority class diffusion backbone. Contains no selector state."""
 
     model: Any
     majority_class: int
@@ -64,13 +83,13 @@ def train_diffusion(
     seed: int = 42,
 ) -> DiffusionHandle:
     """
-    Step 1. Train a tabular diffusion model on majority-class samples only.
+    Step 1. Train a tabular diffusion model on majority class samples only.
 
-    This function only fits the generative backbone.  It does not score
-    samples, filter noise, or choose which majority instances to keep.
+    This function only fits the generative backbone. Sample selection is
+    performed later by ``undersample``.
 
-    If the private training backend is present, it is used; otherwise a
-    lightweight handle is returned so that the public pipeline still type-checks.
+    If ``diffreu_core.train_majority_diffusion`` is present, it is used;
+    otherwise a lightweight handle is returned.
     """
     X = _to_numpy(X_train)
     y = _to_numpy(y_train).reshape(-1)
@@ -111,7 +130,7 @@ def undersample(
     y_train: ArrayLike,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Step 2. Black-box undersampling.
+    Step 2. undersampling.
 
     Parameters
     ----------
@@ -136,10 +155,9 @@ def undersample(
         from diffreu_core import select_majority
     except ImportError as exc:
         raise RuntimeError(
-            "The Diff-REU sample-selection module is not included in this "
+            "The Diff-REU sample selection module is not included in this "
             "public interface. Expected a local file diffreu_core.py that "
-            "defines select_majority(diffusion, X, y) -> (X_bal, y_bal). "
-            "The full implementation will be released after acceptance."
+            "defines select_majority(diffusion, X, y) -> (X_bal, y_bal)."
         ) from exc
 
     X_bal, y_bal = select_majority(diffusion, X, y)
@@ -195,7 +213,7 @@ def run_one_fold(
     diffusion <- train_diffusion(train)
     X_bal, y_bal <- undersample(diffusion, train)
     clf <- train_classifier(X_bal, y_bal)
-    return test AUC and probabilities
+    return test AUC, Gini, G-mean, F1, TPRGap, and probabilities
     """
     diffusion = train_diffusion(
         X_train, y_train, feature_info, num_classes,
@@ -209,9 +227,14 @@ def run_one_fold(
     proba = clf.predict_proba(X_te)
     pos_idx = list(clf.classes_).index(MINORITY_LABEL) if MINORITY_LABEL in clf.classes_ else 1
     y_score = proba[:, pos_idx]
+    y_pred = (y_score >= CLASSIFICATION_THRESHOLD).astype(int)
     auc = float("nan") if len(np.unique(y_te)) < 2 else float(roc_auc_score(y_te, y_score))
     return {
         "auc": auc,
+        "gini": _gini_score(auc),
+        "gmean": _gmean_score(y_te, y_pred),
+        "f1": float(f1_score(y_te, y_pred, zero_division=0)),
+        "tprgap": _tprgap_score(y_te, y_pred),
         "y_score": y_score,
         "n_balanced": int(len(y_bal)),
         "classifier": clf,
@@ -239,7 +262,10 @@ if __name__ == "__main__":
     print("  diffusion handle:", handle.n_features, "features, majority class", handle.majority_class)
     try:
         out = run_one_fold(X_tr, y_tr, X_te, y_te, feature_info=feature_info, num_steps=100, seed=0)
-        print("  fold AUC = %.4f" % out["auc"])
+        print(
+            "  fold AUC=%.4f  Gini=%.4f  G-mean=%.4f  F1=%.4f  TPRGap=%.4f"
+            % (out["auc"], out["gini"], out["gmean"], out["f1"], out["tprgap"])
+        )
     except RuntimeError as err:
         print("  undersample() is a black box in this release:")
         print("   ", str(err).split("The full implementation")[0].strip())
